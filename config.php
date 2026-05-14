@@ -16,6 +16,12 @@ const APP_BASE_URL = '';
 // Feature flag: set to false to disable OTP flow and revert to direct-send.
 const OTP_FLOW_ENABLED = true;
 
+// Entry security: require an email OTP at admin check-in before marking attendance.
+// This prevents a printed QR from being used without access to the registered email.
+const ENTRY_OTP_ENABLED = true;
+const ENTRY_OTP_TTL_SECONDS = 300; // 5 minutes
+const ENTRY_OTP_RESEND_COOLDOWN_SECONDS = 30;
+
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 function db(): mysqli
@@ -442,6 +448,50 @@ function ensure_registration_otps_table(): void
     );
 
     $done = true;
+}
+
+function ensure_entry_otps_table(): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+
+    db()->query(
+        "CREATE TABLE IF NOT EXISTS entry_otps (
+            registration_id INT UNSIGNED NOT NULL PRIMARY KEY,
+            otp_code CHAR(6) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_sent_at TIMESTAMP NULL DEFAULT NULL,
+            CONSTRAINT fk_eotp_registration FOREIGN KEY (registration_id) REFERENCES registrations(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $done = true;
+}
+
+function mask_email(string $email): string
+{
+    $email = trim($email);
+    $at = strrpos($email, '@');
+    if ($at === false) {
+        return $email;
+    }
+
+    $local = substr($email, 0, $at);
+    $domain = substr($email, $at + 1);
+
+    if ($local === '') {
+        return '*@' . $domain;
+    }
+
+    if (strlen($local) <= 2) {
+        return substr($local, 0, 1) . '*@' . $domain;
+    }
+
+    return substr($local, 0, 1) . str_repeat('*', max(1, strlen($local) - 2)) . substr($local, -1) . '@' . $domain;
 }
 
 function ensure_email_verification_for_registration(int $registrationId): array

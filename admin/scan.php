@@ -61,6 +61,54 @@ if ($selectedEventId <= 0 && count($events) > 0) {
                 <div id="scanCenterText" class="scan-center-text">Attendance Marked</div>
             </div>
 
+            <div id="otpModal" class="popup-modal" style="display:none;" aria-hidden="true">
+                <div class="popup-modal__box">
+                    <h3 class="popup-modal__title">Enter Entry OTP</h3>
+                    <p id="otpModalMsg" class="popup-modal__msg">Ask the student for the OTP sent to their email.</p>
+                    <form id="otpForm" autocomplete="off">
+                        <div class="field">
+                            <label for="otpInput">OTP (6 digits)</label>
+                            <input id="otpInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" class="mono" placeholder="123456">
+                        </div>
+                        <div id="otpInlineError" class="alert error" style="display:none; margin-top: 0.75rem;"></div>
+                        <div class="row" style="margin-top: 0.9rem;">
+                            <button id="otpVerifyBtn" type="submit" class="btn" style="flex:1;">Verify & Mark</button>
+                            <button id="otpCancelBtn" type="button" class="btn outline" style="flex:1;">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <style>
+                .popup-modal {
+                    position: fixed;
+                    inset: 0;
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    background: rgba(0,0,0,0.45);
+                    z-index: 10000;
+                    padding: 1rem;
+                }
+                .popup-modal__box {
+                    background: #fff;
+                    border-radius: 12px;
+                    max-width: 420px;
+                    width: 100%;
+                    box-shadow: 0 12px 30px rgba(0,0,0,0.2);
+                    padding: 1.25rem;
+                }
+                .popup-modal__title {
+                    margin: 0 0 0.5rem;
+                    font-size: 1.1rem;
+                    color: #0f172a;
+                }
+                .popup-modal__msg {
+                    margin: 0 0 0.75rem;
+                    color: #475569;
+                    line-height: 1.5;
+                }
+            </style>
+
             <div class="field">
                 <label for="eventSelect">Select Event</label>
                 <select id="eventSelect" name="event_id">
@@ -111,6 +159,7 @@ if ($selectedEventId <= 0 && count($events) > 0) {
 <script>
 const csrfToken = <?= json_encode(csrf_token(), JSON_UNESCAPED_SLASHES) ?>;
 const scanEndpoint = <?= json_encode(app_url('admin/scan_attendance.php'), JSON_UNESCAPED_SLASHES) ?>;
+const verifyOtpEndpoint = <?= json_encode(app_url('admin/verify_entry_otp.php'), JSON_UNESCAPED_SLASHES) ?>;
 
 let scannerActive = false;
 let toastTimer = null;
@@ -119,6 +168,7 @@ let scanAnimationId = 0;
 let cameraStream = null;
 let isSending = false;
 let lastFrameScanAt = 0;
+let otpGate = null;
 
 const frameScanIntervalMs = 110;
 const duplicateWindowMs = 2400;
@@ -134,6 +184,14 @@ const scanLogEl = document.getElementById('scanLog');
 const eventSelectEl = document.getElementById('eventSelect');
 const manualFormEl = document.getElementById('manualForm');
 const manualTokenEl = document.getElementById('manualToken');
+
+const otpModalEl = document.getElementById('otpModal');
+const otpModalMsgEl = document.getElementById('otpModalMsg');
+const otpFormEl = document.getElementById('otpForm');
+const otpInputEl = document.getElementById('otpInput');
+const otpInlineErrorEl = document.getElementById('otpInlineError');
+const otpCancelBtnEl = document.getElementById('otpCancelBtn');
+const otpVerifyBtnEl = document.getElementById('otpVerifyBtn');
 
 const videoEl = document.getElementById('scannerVideo');
 const canvasEl = document.getElementById('scannerCanvas');
@@ -239,7 +297,7 @@ function playFeedbackTone(type) {
 function notify(type, message) {
     showResult(type, message);
     showToast(type, message);
-    showCenterToast(type, type === 'success' ? 'Attendance Marked' : 'Scan Failed');
+    showCenterToast(type, type === 'success' ? 'Attendance Marked' : (type === 'error' ? 'Scan Failed' : ''));
     addScanLog(type, message);
     playFeedbackTone(type);
 }
@@ -258,6 +316,10 @@ async function sendAttendance(payload) {
         return;
     }
 
+    if (otpGate) {
+        return;
+    }
+
     const formData = new FormData();
     formData.append('csrf_token', csrfToken);
     formData.append('event_id', eventSelectEl.value);
@@ -270,15 +332,120 @@ async function sendAttendance(payload) {
             credentials: 'same-origin'
         });
 
-        const data = await response.json();
+        const rawText = await response.text();
+        let data = null;
+        try {
+            data = JSON.parse(rawText);
+        } catch (e) {
+            data = null;
+        }
+
+        if (!data || typeof data !== 'object') {
+            const snippet = rawText ? rawText.slice(0, 180) : '';
+            notify('error', 'Scan request failed (HTTP ' + response.status + '). ' + (snippet ? 'Response: ' + snippet : ''));
+            return;
+        }
+
+        if (data.type === 'otp_required') {
+            notify('info', data.message || 'OTP required.');
+            openOtpModal(payload, data);
+            return;
+        }
+
         notify(data.type || 'info', data.message || 'Unexpected response.');
     } catch (error) {
-        notify('error', 'Could not send attendance request.');
+        notify('error', 'Could not send attendance request. Check network / admin session.');
+    }
+}
+
+function openOtpModal(payload, data) {
+    otpGate = {
+        payload,
+        eventId: eventSelectEl.value
+    };
+
+    otpInlineErrorEl.style.display = 'none';
+    otpInlineErrorEl.textContent = '';
+
+    const maskedEmail = data.email_masked ? String(data.email_masked) : 'registered email';
+    const studentName = data.student_name ? String(data.student_name) : 'Student';
+
+    otpModalMsgEl.textContent = 'OTP sent to ' + maskedEmail + '. Ask ' + studentName + ' for the 6-digit OTP.';
+    otpInputEl.value = '';
+
+    otpModalEl.style.display = 'flex';
+    otpModalEl.setAttribute('aria-hidden', 'false');
+
+    window.setTimeout(() => otpInputEl.focus(), 50);
+}
+
+function closeOtpModal() {
+    otpGate = null;
+    otpModalEl.style.display = 'none';
+    otpModalEl.setAttribute('aria-hidden', 'true');
+    otpInputEl.value = '';
+    otpInlineErrorEl.style.display = 'none';
+    otpInlineErrorEl.textContent = '';
+}
+
+async function verifyEntryOtp(otpCode) {
+    if (!otpGate) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('csrf_token', csrfToken);
+    formData.append('event_id', otpGate.eventId);
+    formData.append('qr_payload', otpGate.payload);
+    formData.append('otp', otpCode);
+
+    otpVerifyBtnEl.disabled = true;
+
+    try {
+        const response = await fetch(verifyOtpEndpoint, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        });
+
+        const rawText = await response.text();
+        let data = null;
+        try {
+            data = JSON.parse(rawText);
+        } catch (e) {
+            data = null;
+        }
+
+        if (!data || typeof data !== 'object') {
+            const snippet = rawText ? rawText.slice(0, 180) : '';
+            otpInlineErrorEl.style.display = 'block';
+            otpInlineErrorEl.textContent = 'OTP verify failed (HTTP ' + response.status + '). ' + (snippet ? 'Response: ' + snippet : '');
+            return;
+        }
+
+        if (data.type === 'success') {
+            closeOtpModal();
+        }
+        notify(data.type || 'info', data.message || 'Unexpected response.');
+
+        if (data.type !== 'success') {
+            otpInlineErrorEl.style.display = 'block';
+            otpInlineErrorEl.textContent = data.message || 'OTP verification failed.';
+        }
+    } catch (error) {
+        otpInlineErrorEl.style.display = 'block';
+        otpInlineErrorEl.textContent = 'Could not verify OTP. Check network and try again.';
+    } finally {
+        otpVerifyBtnEl.disabled = false;
     }
 }
 
 function enqueuePayload(payload) {
     if (!payload) {
+        return;
+    }
+
+    if (otpGate) {
         return;
     }
 
@@ -290,7 +457,7 @@ function enqueuePayload(payload) {
 }
 
 async function processQueue() {
-    if (isSending || scanQueue.length === 0) {
+    if (otpGate || isSending || scanQueue.length === 0) {
         return;
     }
 
@@ -319,6 +486,7 @@ function onDetectedPayload(rawPayload) {
     }
 
     recentPayloadTimestamps.set(payload, now);
+    addScanLog('info', 'QR detected. Sending for verification...');
     enqueuePayload(payload);
 }
 
@@ -430,6 +598,22 @@ manualFormEl.addEventListener('submit', async (event) => {
     }
 
     enqueuePayload(payload);
+});
+
+otpCancelBtnEl.addEventListener('click', () => {
+    closeOtpModal();
+});
+
+otpFormEl.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const otpCode = otpInputEl.value.trim();
+    if (!/^[0-9]{6}$/.test(otpCode)) {
+        otpInlineErrorEl.style.display = 'block';
+        otpInlineErrorEl.textContent = 'Enter a 6-digit OTP.';
+        otpInputEl.focus();
+        return;
+    }
+    await verifyEntryOtp(otpCode);
 });
 
 window.addEventListener('beforeunload', () => {
