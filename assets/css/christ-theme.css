@@ -1,0 +1,75 @@
+:root {
+    --primary: #0056b3;
+    --primary-dark: #00408a;
+    --accent: #d4af37;
+    --bg: #f6f8fc;
+    --surface: rgba(255, 255, 255, 0.88);
+    --surface-2: rgba(255, 255, 255, 0.72);
+    --border: rgba(148, 163, 184, 0.28);
+    --shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
+}
+
+body {
+    font-family: Inter, "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    background:
+        radial-gradient(900px 420px at 12% 8%, rgba(0, 86, 179, 0.13), transparent 55%),
+        radial-gradient(900px 420px at 86% 18%, rgba(212, 175, 55, 0.12), transparent 55%),
+        var(--bg);
+}
+
+.topbar {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.card,
+.form-wrap,
+.kpi {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+}
+
+table {
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+}
+
+th {
+    background: var(--surface-2);
+}
+
+.btn {
+    border-radius: 999px;
+    padding: 0.65rem 1.15rem;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14);
+}
+
+.btn.outline {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.btn.warn,
+.btn.danger {
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+}
+
+input,
+textarea,
+select {
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(148, 163, 184, 0.34);
+}
+
+.hero {
+    padding-top: 2.8rem;
+}
+
+.hero p {
+    max-width: 70ch;
+}
+
